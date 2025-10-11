@@ -20,8 +20,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 class AnalyticsController extends Controller
 {
     public function __construct(private readonly AnalyticsService $analyticsService)
-    {
-    }
+    {}
 
     /**
      * Show the dashboard with headline metrics and initial charts.
@@ -74,11 +73,6 @@ class AnalyticsController extends Controller
         $series = $this->analyticsService->getTimeSeriesData($days);
         $filename = 'analytics_' . now()->format('Ymd_His') . '.csv';
 
-        $headers = [
-            'Content-Type' => 'text/csv',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-        ];
-
         return response()->stream(function () use ($series): void {
             $output = fopen('php://output', 'w');
             // CSV header
@@ -99,7 +93,10 @@ class AnalyticsController extends Controller
             }
 
             fclose($output);
-        }, 200, $headers);
+        }, 200, [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ]);
     }
 }
 

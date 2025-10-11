@@ -4,25 +4,29 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\SettingsRequest;
+use App\Services\SettingsService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Gate;
 
 class SettingsController extends Controller
 {
+    public function __construct(private readonly SettingsService $settingsService)
+    {}
+
     public function index(): View
     {
         return view('analytics.settings', [
-            'days' => (int) session('analytics.days', 14),
+            'days' => $this->settingsService->getAnalyticsDays(),
         ]);
     }
 
-    public function save(): RedirectResponse
+    public function save(SettingsRequest $request): RedirectResponse
     {
-        $validated = request()->validate([
-            'days' => ['required', 'integer', 'min:7', 'max:180'],
-        ]);
-
-        session(['analytics.days' => (int) $validated['days']]);
+        $this->settingsService->saveAnalyticsDays(
+            $request->validated('days')
+        );
 
         return back()->with('status', 'Settings saved.');
     }

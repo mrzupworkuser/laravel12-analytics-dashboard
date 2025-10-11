@@ -4,12 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\Order;
-use App\Models\User;
-use Carbon\Carbon;
-use DateInterval;
-use DatePeriod;
-use DateTimeImmutable;
+use App\Repositories\OrderRepository;
+use App\Repositories\UserRepository;
 
 /**
  * Metrics and chart data utilities.
@@ -18,130 +14,84 @@ use DateTimeImmutable;
  */
 class AnalyticsService
 {
+    public function __construct(
+        private readonly UserRepository $userRepository,
+        private readonly OrderRepository $orderRepository
+    ) {}
     /**
      * Headline metrics for the current month.
-     *
-     * @return array{
-     *     users:int,
-     *     revenue:float,
-     *     orders:int,
-     *     growth:float
-     * }
      */
     public function getHeadlineMetrics(): array
     {
-        $users = (int) User::query()->count();
+        $users = $this->userRepository->getTotalCount();
+        
+        $currentMonth = now()->startOfMonth();
+        $previousMonth = $currentMonth->copy()->subMonth();
 
-        $startOfMonth = Carbon::now()->startOfMonth();
-        $endOfMonth = Carbon::now()->endOfMonth();
-        $previousStart = (clone $startOfMonth)->subMonth()->startOfMonth();
-        $previousEnd = (clone $startOfMonth)->subMonth()->endOfMonth();
+        $current = $this->orderRepository->getMonthlyMetrics(
+            $currentMonth, 
+            now()->endOfMonth()
+        );
+        
+        $previous = $this->orderRepository->getMonthlyMetrics(
+            $previousMonth, 
+            $previousMonth->copy()->endOfMonth()
+        );
 
-        $revenue = (float) Order::query()
-            ->paid()
-            ->whereBetween('paid_at', [$startOfMonth, $endOfMonth])
-            ->sum('total');
-
-        $orders = (int) Order::query()
-            ->paid()
-            ->whereBetween('paid_at', [$startOfMonth, $endOfMonth])
-            ->count('id');
-
-        $previousRevenue = (float) Order::query()
-            ->paid()
-            ->whereBetween('paid_at', [$previousStart, $previousEnd])
-            ->sum('total');
-
-        $growth = $previousRevenue > 0.0
-            ? (($revenue - $previousRevenue) / $previousRevenue) * 100.0
-            : 0.0;
+        $growth = $previous['revenue'] > 0
+            ? (($current['revenue'] - $previous['revenue']) / $previous['revenue']) * 100
+            : 0;
 
         return [
             'users' => $users,
-            'revenue' => round($revenue, 2),
-            'orders' => $orders,
+            'revenue' => round($current['revenue'], 2),
+            'orders' => $current['orders'],
             'growth' => round($growth, 2),
         ];
     }
 
     /**
      * Time-series data for charts, grouped per day.
-     *
-     * @param int $days Number of days to include in the series (inclusive of today)
-     *
-     * @return array{
-     *     labels: string[],
-     *     datasets: array<string, array<int, float|int>>
-     * }
      */
     public function getTimeSeriesData(int $days = 14): array
     {
-        $today = Carbon::today();
-        $start = $today->copy()->subDays(max(1, $days - 1));
+        $end = now();
+        $start = $end->copy()->subDays($days - 1);
 
-        // Pre-build the label map for all dates in range
-        $dateCursor = $start->copy();
-        $labels = [];
-        $dateKeys = [];
-        while ($dateCursor->lte($today)) {
-            $labels[] = $dateCursor->format('M d');
-            $dateKeys[] = $dateCursor->toDateString();
-            $dateCursor->addDay();
-        }
+        $dateRange = collect()
+            ->times($days, fn($i) => $start->copy()->addDays($i - 1))
+            ->mapWithKeys(fn($date) => [$date->toDateString() => $date->format('M d')]);
 
-        // Orders per day (count) and revenue per day (sum)
-        $ordersPerDay = Order::query()
-            ->paid()
-            ->whereBetween('paid_at', [$start->startOfDay(), $today->endOfDay()])
-            ->selectRaw('DATE(paid_at) as d, COUNT(id) as c, SUM(total) as s')
-            ->groupBy('d')
-            ->pluck('c', 'd');
-
-        $revenuePerDay = Order::query()
-            ->paid()
-            ->whereBetween('paid_at', [$start->startOfDay(), $today->endOfDay()])
-            ->selectRaw('DATE(paid_at) as d, SUM(total) as s')
-            ->groupBy('d')
-            ->pluck('s', 'd');
-
-        $usersPerDay = User::query()
-            ->whereBetween('created_at', [$start->startOfDay(), $today->endOfDay()])
-            ->selectRaw('DATE(created_at) as d, COUNT(id) as c')
-            ->groupBy('d')
-            ->pluck('c', 'd');
-
-        $usersSeries = [];
-        $revenueSeries = [];
-        $ordersSeries = [];
-        $growthSeries = [];
+        $orderData = $this->orderRepository->getDailyMetrics($start, $end);
+        $userData = $this->userRepository->getDailyRegistrations($start, $end);
 
         $previousRevenue = null;
-        foreach ($dateKeys as $dk) {
-            $orders = (int) ($ordersPerDay[$dk] ?? 0);
-            $revenue = (float) ($revenuePerDay[$dk] ?? 0.0);
-            $newUsers = (int) ($usersPerDay[$dk] ?? 0);
-
-            $ordersSeries[] = $orders;
-            $revenueSeries[] = round($revenue, 2);
-            $usersSeries[] = $newUsers;
-
-            if ($previousRevenue === null) {
-                $growthSeries[] = 0.0;
-            } else {
-                $growthSeries[] = $previousRevenue > 0.0
-                    ? round((($revenue - $previousRevenue) / $previousRevenue) * 100.0, 2)
-                    : 0.0;
-            }
+        $datasets = $dateRange->keys()->map(function ($date) use ($orderData, $userData, &$previousRevenue) {
+            $orders = $orderData[$date]['orders'] ?? 0;
+            $revenue = $orderData[$date]['revenue'] ?? 0;
+            $users = $userData[$date] ?? 0;
+            
+            $growth = $previousRevenue > 0 && $previousRevenue !== null
+                ? (($revenue - $previousRevenue) / $previousRevenue) * 100
+                : 0;
+            
             $previousRevenue = $revenue;
-        }
+            
+            return [
+                'users' => (int) $users,
+                'revenue' => round($revenue, 2),
+                'orders' => (int) $orders,
+                'growth' => round($growth, 2),
+            ];
+        });
 
         return [
-            'labels' => $labels,
+            'labels' => $dateRange->values()->toArray(),
             'datasets' => [
-                'users' => $usersSeries,
-                'revenue' => $revenueSeries,
-                'orders' => $ordersSeries,
-                'growth' => $growthSeries,
+                'users' => $datasets->pluck('users')->toArray(),
+                'revenue' => $datasets->pluck('revenue')->toArray(),
+                'orders' => $datasets->pluck('orders')->toArray(),
+                'growth' => $datasets->pluck('growth')->toArray(),
             ],
         ];
     }

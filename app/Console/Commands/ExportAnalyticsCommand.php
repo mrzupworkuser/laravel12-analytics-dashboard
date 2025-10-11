@@ -7,6 +7,11 @@ namespace App\Console\Commands;
 use App\Services\AnalyticsService;
 use Illuminate\Console\Command;
 
+/**
+ * Command to export analytics time-series data as CSV file.
+ *
+ * @author Manohar Zarkar
+ */
 class ExportAnalyticsCommand extends Command
 {
     /**
@@ -19,14 +24,19 @@ class ExportAnalyticsCommand extends Command
      */
     protected $description = 'Export analytics time-series as CSV';
 
+    /**
+     * Execute the console command to export analytics data as CSV.
+     */
     public function handle(AnalyticsService $service): int
     {
         $days = (int) $this->option('days');
         $series = $service->getTimeSeriesData($days);
 
+        // Generate filename with timestamp
         $filename = 'analytics_' . now()->format('Ymd_His') . '.csv';
         $path = $this->option('path') ?: storage_path('app/' . $filename);
 
+        // Write CSV data
         $handle = fopen($path, 'w');
         fputcsv($handle, ['Date', 'Users', 'Revenue', 'Orders', 'Growth %']);
 

@@ -4,52 +4,58 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
-use App\Models\Order;
-use Carbon\Carbon;
+use App\Http\Requests\ReportsDataRequest;
+use App\Http\Resources\ReportsSummaryResource;
+use App\Http\Resources\TopCustomersResource;
+use App\Services\ReportsService;
 use Illuminate\Http\JsonResponse;
 
 class ReportsController extends Controller
 {
+    public function __construct(private readonly ReportsService $reportsService)
+    {}
+
     /**
      * Range-based revenue/orders summary.
      */
-    public function summary(): JsonResponse
+    public function summary(ReportsDataRequest $request): JsonResponse
     {
-        $start = Carbon::parse(request('start', now()->subDays(29)->toDateString()))->startOfDay();
-        $end = Carbon::parse(request('end', now()->toDateString()))->endOfDay();
+        $start = now()->subDays(29)->startOfDay();
+        $end = now()->endOfDay();
+        
+        if ($request->validated('start')) {
+            $start = now()->parse($request->validated('start'))->startOfDay();
+        }
+        
+        if ($request->validated('end')) {
+            $end = now()->parse($request->validated('end'))->endOfDay();
+        }
 
-        $q = Order::query()->paid()->whereBetween('paid_at', [$start, $end]);
+        $summary = $this->reportsService->getSummary($start, $end);
 
-        $revenue = (float) $q->clone()->sum('total');
-        $orders = (int) $q->clone()->count('id');
-
-        return response()->json([
-            'start' => $start->toDateString(),
-            'end' => $end->toDateString(),
-            'revenue' => round($revenue, 2),
-            'orders' => $orders,
-            'avg_order_value' => $orders > 0 ? round($revenue / $orders, 2) : 0.0,
-        ]);
+        return ReportsSummaryResource::make($summary)->response();
     }
 
     /**
      * Top customers by paid revenue within a range.
      */
-    public function topCustomers(): JsonResponse
+    public function topCustomers(ReportsDataRequest $request): JsonResponse
     {
-        $start = Carbon::parse(request('start', now()->subDays(29)->toDateString()))->startOfDay();
-        $end = Carbon::parse(request('end', now()->toDateString()))->endOfDay();
+        $start = now()->subDays(29)->startOfDay();
+        $end = now()->endOfDay();
+        $limit = $request->validated('limit', 10);
+        
+        if ($request->validated('start')) {
+            $start = now()->parse($request->validated('start'))->startOfDay();
+        }
+        
+        if ($request->validated('end')) {
+            $end = now()->parse($request->validated('end'))->endOfDay();
+        }
 
-        $rows = Order::query()
-            ->paid()
-            ->whereBetween('paid_at', [$start, $end])
-            ->selectRaw('user_id, COALESCE(SUM(total),0) as revenue, COUNT(id) as orders')
-            ->groupBy('user_id')
-            ->orderByDesc('revenue')
-            ->limit(10)
-            ->get();
+        $customers = $this->reportsService->getTopCustomers($start, $end, $limit);
 
-        return response()->json(['data' => $rows]);
+        return TopCustomersResource::make($customers)->response();
     }
 }
 

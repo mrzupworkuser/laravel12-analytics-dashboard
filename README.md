@@ -43,13 +43,7 @@ cp .env.example .env
 php artisan key:generate
 ```
 
-2) Migrate and seed
-```
-php artisan migrate --force
-php artisan db:seed --force
-```
-
-3) Serve
+2) Serve
 ```
 php artisan serve
 ```
@@ -81,14 +75,6 @@ orders table:
 - paid_at (nullable timestamp)
 
 users table is Laravel default. Time-series aggregates group by day.
-
-## Testing
-Run the full test suite:
-```
-php artisan test
-```
-- Unit: validates service metrics and time-series generation
-- Feature: verifies dashboard renders and JSON structure for the data endpoint
 
 ## Code Style
 - PSR-12, strict types enabled across PHP files
